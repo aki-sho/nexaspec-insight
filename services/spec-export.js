@@ -1,4 +1,5 @@
 const { SECTION_KEYS } = require("./hardware-service");
+const { productName } = require("../package.json");
 
 function validateExportOptions(options, allowFormat = true) {
   const allowed = allowFormat ? ["format", "includeSerial"] : ["includeSerial"];
@@ -23,13 +24,21 @@ function redact(value, includeSerial) {
 
 function createReport(snapshot, options, version) {
   if (!SECTION_KEYS.some((key) => snapshot[key])) throw new Error("出力できる情報がありません。先に情報を取得してください。");
-  const report = { application: "PC Spec Tool", version, capturedAt: snapshot.capturedAt,
+  const report = { application: productName, version, capturedAt: snapshot.capturedAt,
     serialNumbersIncluded: options.includeSerial, sections: snapshot.sections };
   for (const key of SECTION_KEYS) if (snapshot[key]) report[key] = redact(snapshot[key], options.includeSerial);
   if (options.format === "json") return JSON.stringify(report, null, 2) + "\n";
 
-  const lines = ["PC Spec Tool / System report", `Version: ${version}`, `Captured: ${report.capturedAt}`,
+  const lines = [`${productName} / System report`, `Version: ${version}`, `Captured: ${report.capturedAt}`,
     `Serial numbers: ${options.includeSerial ? "included" : "excluded"}`, ""];
+  const units = {
+    size: " (bytes)", total: " (bytes)", used: " (bytes)", available: " (bytes)",
+    memMax: " (bytes)", l2: " (bytes)", l3: " (bytes)", bytesPerSector: " (bytes)",
+    clockSpeed: " (MHz)", speed: " (GHz)", speedMax: " (GHz)", voltageConfigured: " (V)",
+    vram: " (MB)", currentResX: " (px)", currentResY: " (px)", currentRefreshRate: " (Hz)",
+    temperatureGpu: " (°C)", temperature: " (°C)", powerDraw: " (W)",
+    use: " (%)", nvmePercentageUsed: " (%)", uptime: " (s)", powerOnHours: " (h)"
+  };
   function append(value, prefix = "") {
     for (const [key, item] of Object.entries(value)) {
       if (Array.isArray(item)) {
@@ -39,8 +48,6 @@ function createReport(snapshot, options, version) {
         lines.push(`${prefix}${key}:`);
         append(item, prefix + "  ");
       } else {
-        const units = { size: " (bytes)", total: " (bytes)", used: " (bytes)", available: " (bytes)",
-          clockSpeed: " (MHz)", speed: " (GHz)", vram: " (MB)", use: " (%)" };
         lines.push(`${prefix}${key}${units[key] || ""}: ${String(item ?? "-").replace(/[\r\n]+/g, " ")}`);
       }
     }

@@ -5,7 +5,9 @@ $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$version = (Get-Content -LiteralPath (Join-Path $repositoryRoot "package.json") -Raw -Encoding UTF8 | ConvertFrom-Json).version
+$metadata = Get-Content -LiteralPath (Join-Path $repositoryRoot "package.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+$version = $metadata.version
+$artifactBase = $metadata.productName.Replace(" ", "-")
 $stageRoot = [IO.Path]::GetFullPath((Join-Path $repositoryRoot ".release-stage"))
 $stagePath = Join-Path $stageRoot ("v$version-" + [Guid]::NewGuid().ToString("N"))
 if ($ResumeStage) {
@@ -29,6 +31,8 @@ function Get-Sha256Hex([string]$FilePath) {
 Push-Location $repositoryRoot
 try {
   if (-not $ResumeStage) {
+    & node (Join-Path $repositoryRoot "node_modules\electron\install.js")
+    if ($LASTEXITCODE -ne 0) { throw "Electron runtime setup failed with exit code $LASTEXITCODE" }
     & (Join-Path $repositoryRoot "node_modules\.bin\electron-builder.cmd") --win --x64 --publish never "--config.directories.output=$stagePath" "--config.electronDist=$(Join-Path $repositoryRoot 'node_modules\electron\dist')"
     if ($LASTEXITCODE -ne 0) { throw "electron-builder failed with exit code $LASTEXITCODE" }
   }
@@ -37,14 +41,14 @@ try {
   & node (Join-Path $PSScriptRoot "run-security-tests.cjs")
   if ($LASTEXITCODE -ne 0) { throw "Packaged application verification failed" }
 
-  $setupName = "PC-Spec-Tool-Setup-$version.exe"
-  $portableName = "PC-Spec-Tool-Portable-$version.exe"
-  $zipName = "PC-Spec-Tool-Portable-$version.zip"
-  $folderName = "PC-Spec-Tool-Portable-$version"
+  $setupName = "$artifactBase-Setup-$version.exe"
+  $portableName = "$artifactBase-Portable-$version.exe"
+  $zipName = "$artifactBase-Portable-$version.zip"
+  $folderName = "$artifactBase-Portable-$version"
   $portableFolder = Join-Path $stagePath $folderName
   New-Item -ItemType Directory -Path $portableFolder -Force | Out-Null
   Copy-Item -LiteralPath (Join-Path $stagePath $portableName) -Destination (Join-Path $portableFolder $portableName) -Force
-  $readme = (Get-Content -LiteralPath (Join-Path $repositoryRoot "build\portable-readme.txt") -Raw -Encoding UTF8).Replace("{{VERSION}}", $version)
+  $readme = (Get-Content -LiteralPath (Join-Path $PSScriptRoot "portable-readme.txt") -Raw -Encoding UTF8).Replace("{{VERSION}}", $version)
   [IO.File]::WriteAllText((Join-Path $portableFolder "README.txt"), $readme, (New-Object Text.UTF8Encoding($false)))
   Compress-Archive -LiteralPath $portableFolder -DestinationPath (Join-Path $stagePath $zipName) -CompressionLevel Optimal -Force
 
@@ -54,6 +58,15 @@ try {
     $actual = @($archive.Entries | Where-Object { -not $_.FullName.EndsWith("/") } | ForEach-Object { $_.FullName.Replace("\", "/") } | Sort-Object)
     $expected = @("$folderName/$portableName", "$folderName/README.txt") | Sort-Object
     if (($actual -join "`n") -ne ($expected -join "`n")) { throw "Unexpected portable ZIP structure" }
+    $portableEntry = $archive.Entries | Where-Object { $_.FullName.Replace("\", "/") -eq "$folderName/$portableName" }
+    $entryStream = $portableEntry.Open()
+    $algorithm = [Security.Cryptography.SHA256]::Create()
+    try {
+      $archivedHash = ([BitConverter]::ToString($algorithm.ComputeHash($entryStream))).Replace("-", "").ToLowerInvariant()
+      if ($archivedHash -ne (Get-Sha256Hex (Join-Path $stagePath $portableName))) {
+        throw "Portable ZIP executable does not match the standalone EXE"
+      }
+    } finally { $entryStream.Dispose(); $algorithm.Dispose() }
   } finally { $archive.Dispose() }
 
   $names = @()

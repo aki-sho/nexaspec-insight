@@ -1,5 +1,3 @@
-node_modules/
-dist/
 # Local release archives and transient outputs
 /release-history/
 /.github-sync*/

@@ -1,17 +1,36 @@
-import { createMessageView, createCardPage, createCard, formatBytes } from "../renderer/spec-view.js";
+import { createMessage, createCardGroup, createCard, formatBytes, formatNumber } from "../renderer/spec-view.js";
+
+const driveTypes = ["—", "ルートなし", "リムーバブル", "固定", "ネットワーク", "光学", "RAM ディスク"];
 
 export function storageTemplate(systemInfo) {
-  if (!systemInfo) return createMessageView("Storage", "読み込み中です...");
-  const { disks = [], volumes = [] } = systemInfo.storage || {};
-  const cards = disks.map((disk, index) => createCard(disk.name || disk.model || `ディスク ${index + 1}`, [
-    ["型番", disk.name || disk.model || "—"], ["種類", disk.type || "—"],
-    ["容量", formatBytes(disk.size)], ["接続", disk.interfaceType || "—"]
-  ], `DISK ${String(index + 1).padStart(2, "0")}`));
-  volumes.forEach((volume) => {
+  const { disks = [], volumes = [] } = systemInfo.storage;
+  const view = document.createDocumentFragment();
+  const diskCards = disks.map((disk, index) => {
+    const rows = [
+      ["種類", disk.type || "—"],
+      ["容量", formatBytes(disk.size)],
+      ["接続", disk.interfaceType || "—"],
+      ["ファームウェア", disk.firmwareRevision],
+      ["セクターサイズ", formatNumber(disk.bytesPerSector, "B")]
+    ];
+    if (disk.healthStatus) rows.push(["ディスク状態", disk.healthStatus]);
+    if (typeof disk.smartPassed === "boolean") rows.push(["S.M.A.R.T. 判定", disk.smartPassed ? "正常" : "異常"]);
+    if (Number.isFinite(disk.temperature)) rows.push(["温度", formatNumber(disk.temperature, "°C")]);
+    if (Number.isFinite(disk.powerOnHours)) rows.push(["通電時間", formatNumber(disk.powerOnHours, "時間")]);
+    if (Number.isFinite(disk.nvmePercentageUsed)) rows.push(["NVMe 耐久性消費率", formatNumber(disk.nvmePercentageUsed, "%")]);
+    return createCard(disk.name || disk.model || `ディスク ${index + 1}`, rows);
+  });
+  view.append(diskCards.length ? createCardGroup("物理ディスク", diskCards) : createMessage("物理ディスク情報を取得できませんでした。"));
+
+  const volumeCards = volumes.map((volume) => {
     const card = createCard(volume.mount || volume.fs || "ボリューム", [
-      ["ファイルシステム", volume.type || "—"], ["容量", formatBytes(volume.size)],
-      ["使用済み", formatBytes(volume.used)], ["空き容量", formatBytes(volume.available)]
-    ], "VOLUME");
+      ["ボリューム名", volume.label],
+      ["ドライブ種別", driveTypes[volume.driveType]],
+      ["ファイルシステム", volume.type || "—"],
+      ["容量", formatBytes(volume.size)],
+      ["使用済み", formatBytes(volume.used)],
+      ["空き容量", formatBytes(volume.available)]
+    ]);
     if (Number.isFinite(volume.use)) {
       const progress = document.createElement("progress");
       progress.max = 100;
@@ -19,9 +38,8 @@ export function storageTemplate(systemInfo) {
       progress.setAttribute("aria-label", `${volume.mount || volume.fs} 使用率 ${progress.value}%`);
       card.append(progress);
     }
-    cards.push(card);
+    return card;
   });
-  return cards.length
-    ? createCardPage("Storage", "物理ディスクとボリュームをそれぞれ表示。空き容量はボリューム単位です。", cards)
-    : createMessageView("Storage", "ストレージ情報を取得できませんでした。");
+  view.append(volumeCards.length ? createCardGroup("ボリューム", volumeCards) : createMessage("ボリューム情報を取得できませんでした。"));
+  return view;
 }

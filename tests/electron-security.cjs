@@ -4,6 +4,16 @@ const path = require("node:path");
 const { app, BrowserWindow, clipboard, dialog } = require("electron");
 const appRoot = process.env.PC_SPEC_SECURITY_APP_ROOT || path.join(__dirname, "..");
 const si = require(path.join(appRoot, "node_modules/systeminformation"));
+const windows = require(path.join(appRoot, "services/powershell-runner.js"));
+const readWindowsDetails = windows.readWindowsDetails;
+let demoWindowsDetails;
+const liveWindowsDetails = {};
+windows.readWindowsDetails = async (section) => {
+  if (demoWindowsDetails) return demoWindowsDetails[section];
+  const details = await readWindowsDetails(section);
+  liveWindowsDetails[section] = details;
+  return details;
+};
 
 if (!process.env.PC_SPEC_SECURITY_TEST_DIR) {
   throw new Error("Run this test with npm run test:security");
@@ -16,26 +26,6 @@ require(path.join(appRoot, "main.js"));
 
 const payload = `<img src=x onerror="window.__pcSpecXss=true"> & " ' </div><script>window.__pcSpecXss=true</script>`;
 const evaluate = (win, source) => win.webContents.executeJavaScript(source, true);
-
-async function waitForPanel(win, title) {
-  await evaluate(win, `new Promise((resolve, reject) => {
-    const deadline = Date.now() + 30000;
-    const check = () => {
-      const heading = document.querySelector('.panel h2');
-      const content = ${JSON.stringify(title)} === 'CPU'
-        ? document.querySelector('.panel .value')
-        : document.querySelector('.panel .value, .panel p');
-      if (heading?.textContent === ${JSON.stringify(title)} && content && !document.querySelector('#refresh').disabled) {
-        resolve();
-      } else if (Date.now() > deadline) {
-        reject(new Error('Timed out waiting for panel: ' + ${JSON.stringify(title)}));
-      } else {
-        setTimeout(check, 50);
-      }
-    };
-    check();
-  })`);
-}
 
 async function waitFor(win, condition) {
   await evaluate(win, `new Promise((resolve, reject) => {
@@ -60,7 +50,17 @@ app.whenReady().then(async () => {
   if (win.webContents.isLoading()) {
     await new Promise((resolve) => win.webContents.once("did-finish-load", resolve));
   }
-  await waitForPanel(win, "CPU");
+  await waitFor(win, "!document.querySelector('#refresh').disabled && Boolean(document.querySelector('.overview-grid [data-section=cpu] .value'))");
+  assert.equal(await evaluate(win, "document.querySelector('.tab[aria-selected=true]').dataset.tab"), "All");
+  assert.equal(await evaluate(win, "document.querySelector('#tab-All').nextElementSibling.dataset.tab"), "CPU");
+  const { productName, version } = require(path.join(appRoot, "package.json"));
+  assert.equal(await evaluate(win, "document.title"), productName);
+  assert.ok(await evaluate(win, "document.querySelector('.brand img').naturalWidth > 0"));
+  if (process.platform === "win32") {
+    assert.ok(Array.isArray(liveWindowsDetails.graphics?.adapters));
+    assert.ok(Array.isArray(liveWindowsDetails.storage?.volumes));
+    assert.ok(Object.hasOwn(liveWindowsDetails.os || {}, "lastBootAt"));
+  }
   const entryUrl = win.webContents.getURL();
   const preferences = win.webContents.getLastWebPreferences();
   assert.equal(preferences.sandbox, true);
@@ -69,47 +69,108 @@ app.whenReady().then(async () => {
   assert.equal(preferences.webSecurity, true);
   assert.equal(await evaluate(win, "typeof require"), "undefined");
   assert.equal(await evaluate(win, "getComputedStyle(document.querySelector('.spec-grid')).display"), "grid");
-  console.log(`PASS: Electron ${process.versions.electron}, sandboxed renderer, real hardware IPC and local CSS`);
+  console.log(`PASS: Electron ${process.versions.electron}, real hardware IPC, Windows supplementary queries and local CSS`);
 
   if (process.env.PC_SPEC_TEST_SCREENSHOT) {
     fs.writeFileSync(process.env.PC_SPEC_TEST_SCREENSHOT, (await win.webContents.capturePage()).toPNG());
   }
 
-  for (const title of ["CPU", "Mainboard", "Memory", "Graphics", "Storage", "OS", "About"]) {
+  for (const [tab, heading] of [["CPU", "プロセッサー"], ["Mainboard", "マザーボード"], ["Memory", "メモリ"],
+    ["Graphics", "グラフィックス"], ["Storage", "ストレージ"], ["OS", "OS"], ["About", productName]]) {
     assert.equal(await evaluate(win, `(() => {
-      document.querySelector('[data-tab="${title}"]').click();
+      document.querySelector('[data-tab="${tab}"]').click();
       return document.querySelector('.panel h2').textContent;
-    })()`), title);
+    })()`), heading);
   }
-  console.log("PASS: all seven existing tabs render");
+  console.log("PASS: brand assets load and all eight tabs render");
 
   const privateMarker = "DEMO-PRIVATE-SERIAL";
   const calls = {};
   const demo = {
-    cpu: { manufacturer: "AMD", brand: "Ryzen 9 9900X", cores: 24, physicalCores: 12, speed: 4.4 },
-    baseboard: { manufacturer: "ASUS", model: "ROG STRIX X870-F", version: "Rev 1.xx", serial: privateMarker },
-    mem: { total: 32 * 1024 ** 3 },
-    memLayout: [0, 1].map(index => ({ bank: `DIMM ${index + 1}`, size: 16 * 1024 ** 3, type: "DDR5", clockSpeed: 6000, manufacturer: "Kingston", partNum: "KF560C30-16", serialNum: privateMarker })),
-    graphics: { controllers: [{ vendor: "NVIDIA", model: "GeForce RTX 5070", vram: 12288, bus: "PCIe", driverVersion: "581.80" }, { vendor: "AMD", model: "Radeon Graphics", vram: 512, bus: "PCIe", driverVersion: "32.0.12033" }] },
-    diskLayout: [{ name: "Samsung SSD 990 PRO 1TB", type: "SSD", size: 10 ** 12, interfaceType: "NVMe", serialNum: privateMarker }, { name: "WD Blue 2TB", type: "HD", size: 2 * 10 ** 12, interfaceType: "SATA", serialNum: privateMarker }],
+    cpu: { manufacturer: "AMD", brand: "Ryzen 9 9900X", cores: 24, physicalCores: 12, speed: 4.4,
+      speedMax: 5.6, socket: "AM5", cache: { l2: 12 * 1024 ** 2, l3: 64 * 1024 ** 2 } },
+    baseboard: { manufacturer: "ASUS", model: "ROG STRIX X870-F", version: "Rev 1.xx", serial: privateMarker,
+      memSlots: 4, memMax: 192 * 1024 ** 3 },
+    bios: { vendor: "American Megatrends", version: "2102", releaseDate: "2025-10-16" },
+    mem: { total: 32 * 1024 ** 3, active: 12 * 1024 ** 3, available: 20 * 1024 ** 3 },
+    memLayout: [0, 1].map(index => ({ bank: `DIMM ${index + 1}`, size: 16 * 1024 ** 3, type: "DDR5",
+      clockSpeed: 6000, manufacturer: "Kingston", partNum: "KF560C30-16", serialNum: privateMarker,
+      formFactor: "DIMM", voltageConfigured: 1.35 })),
+    graphics: {
+      controllers: [
+        { vendor: "NVIDIA", model: "GeForce RTX 5070", vram: 12288, bus: "PCIe", driverVersion: "581.80",
+          temperatureGpu: 42, powerDraw: 32.5 },
+        { vendor: "AMD", model: "Radeon Graphics", vram: 512, bus: "PCIe", driverVersion: "32.0.12033" }
+      ],
+      displays: [
+        { vendor: "Dell", model: "Dell U2724D", currentResX: 2560, currentResY: 1440,
+          currentRefreshRate: 120, connection: "DisplayPort", main: true }
+      ]
+    },
+    diskLayout: [
+      { name: "Samsung SSD 990 PRO 1TB", type: "SSD", size: 10 ** 12, interfaceType: "NVMe", serialNum: privateMarker,
+        firmwareRevision: "7B2QJXD7", bytesPerSector: 512, smartStatus: "Ok", temperature: 38,
+        smartData: { smart_status: { passed: true }, power_on_time: { hours: 730 }, nvme_smart_health_information_log: { percentage_used: 2 } } },
+      { name: "WD Blue 2TB", type: "HD", size: 2 * 10 ** 12, interfaceType: "SATA", serialNum: privateMarker }
+    ],
     fsSize: [{ mount: "C:", fs: "C:", type: "NTFS", size: 10 ** 12, used: 382 * 10 ** 9, available: 618 * 10 ** 9, use: 38.2 }, { mount: "D:", fs: "D:", type: "NTFS", size: 2 * 10 ** 12, used: 5 * 10 ** 11, available: 1.5 * 10 ** 12, use: 25 }],
-    osInfo: { distro: "Microsoft Windows 11 Pro", release: "10.0.26200", build: "26200", arch: "x64" }
+    osInfo: { distro: "Microsoft Windows 11 Pro", release: "10.0.26200", build: "26200", arch: "x64", uefi: true },
+    time: { uptime: 92000 }
+  };
+  demoWindowsDetails = {
+    graphics: { adapters: [{ Name: "GeForce RTX 5070", DriverVersion: "581.80", DriverDate: "2025-11-10" }] },
+    storage: { volumes: [{ DeviceID: "C:", VolumeName: "Windows", DriveType: 3 }, { DeviceID: "D:", VolumeName: "Data", DriveType: 3 }] },
+    os: { displayVersion: "25H2", installDate: "2025-11-09T01:00:00Z", lastBootAt: "2026-11-14T01:10:00Z" },
+    firmware: { type: "Uefi" }
   };
   for (const [key, value] of Object.entries(demo)) si[key] = async () => { calls[key] = (calls[key] || 0) + 1; return value; };
   await clickAndWait(win, "#refresh");
   assert.equal(await evaluate(win, "document.querySelector('#include-serial').checked"), false);
-  assert.equal(await evaluate(win, "document.querySelector('#app-version').textContent"), "v" + require(path.join(appRoot, "package.json")).version);
-  for (const [tab, count] of [["Graphics", 2], ["Memory", 3], ["Storage", 4]]) {
+  assert.equal(await evaluate(win, "document.querySelector('#app-version').textContent"), "v" + version);
+  for (const [tab, count] of [["Graphics", 3], ["Memory", 2], ["Storage", 4]]) {
     await evaluate(win, `document.querySelector('[data-tab="${tab}"]').click()`);
     assert.equal(await evaluate(win, "document.querySelectorAll('.panel .spec-card').length"), count, tab);
   }
   assert.ok(await evaluate(win, "document.querySelector('.panel').textContent.includes('618 GB')"));
-  console.log("PASS: multiple GPUs, memory modules, physical disks and per-volume free capacity");
+
+  await evaluate(win, "document.querySelector('#tab-All').click()");
+  const summaryValues = await evaluate(win, "[...document.querySelectorAll('.summary-card strong')].map(card => card.textContent)");
+  assert.deepEqual(summaryValues, ["Ryzen 9 9900X", "GeForce RTX 5070", "32 GiB", "物理ディスク 2 台", "Microsoft Windows 11 Pro"]);
+  await evaluate(win, "document.querySelector('.summary-card').click()");
+  assert.equal(await evaluate(win, "document.querySelector('.tab[aria-selected=true]').dataset.tab"), "CPU");
+  assert.equal(await evaluate(win, "document.querySelector('.cpu-summary strong').textContent"), "12 コア");
+  assert.equal(await evaluate(win, "document.activeElement.id"), "spec-panel");
+  await evaluate(win, "document.querySelector('#tab-All').click()");
+  const overview = await evaluate(win, `[...document.querySelectorAll('.overview-grid .category')].map(section => ({
+    key: section.dataset.section, text: section.textContent, updatedAt: section.querySelector('time').dateTime
+  }))`);
+  assert.deepEqual(overview.map((section) => section.key), ["cpu", "mainboard", "memory", "graphics", "storage", "os"]);
+  const expected = {
+    cpu: ["AM5", "5.6 GHz", "64 MiB"],
+    mainboard: ["American Megatrends", "2102", "192 GiB"],
+    memory: ["20 GiB", "DIMM", "1.35 V"],
+    graphics: ["GeForce RTX 5070", "Radeon Graphics", "Dell U2724D", "2560 × 1440", "120 Hz", "2025-11-10", "42 °C", "32.5 W"],
+    storage: ["618 GB", "7B2QJXD7", "512 B", "S.M.A.R.T. 判定", "730 時間", "2 %"],
+    os: ["25H2", "UEFI", "インストール日", "最終起動日時", "1日 1時間 33分"]
+  };
+  for (const section of overview) {
+    assert.ok(Number.isFinite(Date.parse(section.updatedAt)), section.key);
+    assert.ok(section.text.includes("取得済み"), section.key);
+    for (const value of expected[section.key]) assert.ok(section.text.includes(value), `${section.key}: ${value}`);
+  }
+  assert.equal(await evaluate(win, `(() => {
+    document.querySelector('#tab-All').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown' }));
+    return document.activeElement.dataset.tab;
+  })()`), "CPU");
+  await evaluate(win, "document.activeElement.blur()");
+  console.log("PASS: six sections share complete details and acquisition status in the overview");
 
   let copied = "";
   clipboard.writeText = text => { copied = text; };
   await clickAndWait(win, "#copy");
+  assert.ok(copied.startsWith(`${productName} / System report`));
   assert.ok(copied.includes("Ryzen 9 9900X"));
+  assert.ok(copied.includes("driverDate: 2025-11-10"));
   assert.ok(!copied.includes(privateMarker));
   await evaluate(win, "document.querySelector('#include-serial').checked = true");
   await clickAndWait(win, "#copy");
@@ -126,7 +187,13 @@ app.whenReady().then(async () => {
     const contents = fs.readFileSync(filePath, "utf8");
     assert.ok(contents.includes("Ryzen 9 9900X"));
     assert.ok(!contents.includes(privateMarker));
-    if (format === "json") assert.equal(JSON.parse(contents).storage.volumes[0].available, 618 * 10 ** 9);
+    if (format === "json") {
+      const report = JSON.parse(contents);
+      assert.equal(report.application, productName);
+      assert.equal(report.storage.volumes[0].available, 618 * 10 ** 9);
+      assert.equal(report.graphics.displays[0].model, "Dell U2724D");
+      assert.equal(report.os.displayVersion, "25H2");
+    }
   }
   dialog.showSaveDialog = async () => ({ canceled: true });
   await clickAndWait(win, "#save");
@@ -146,7 +213,7 @@ app.whenReady().then(async () => {
   }
   for (const size of [[1180, 820], [860, 620]]) {
     win.setSize(...size);
-    for (const tab of ["CPU", "Graphics", "Memory", "Storage"]) {
+    for (const tab of ["All", "CPU", "Mainboard", "Graphics", "Memory", "Storage", "OS"]) {
       await evaluate(win, `document.querySelector('[data-tab="${tab}"]').click(); document.querySelector('.content').scrollTop = 0`);
       await evaluate(win, "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
       assert.ok(await evaluate(win, "document.documentElement.scrollWidth <= innerWidth && document.querySelector('.panel').scrollWidth <= document.querySelector('.panel').clientWidth"), `${tab} at ${size}`);
@@ -179,11 +246,9 @@ app.whenReady().then(async () => {
       panel.replaceChildren(module[fn](fixture));
       results.push({ name, literal: panel.textContent.includes(payload),
         injected: Boolean(panel.querySelector('img, script, iframe')) });
-      panel.replaceChildren(module[fn](null));
-      if (!panel.textContent.includes('読み込み中')) throw new Error('Missing loading state: ' + name);
     }
-    const { createMessageView } = await import(new URL('./renderer/spec-view.js', location.href).href);
-    panel.replaceChildren(createMessageView(payload, payload));
+    const { createMessage } = await import(new URL('./renderer/spec-view.js', location.href).href);
+    panel.replaceChildren(createMessage(payload));
     results.push({ name: 'message', literal: panel.querySelector('p').textContent === payload,
       injected: Boolean(panel.querySelector('img, script, iframe')) });
     return results;
@@ -202,6 +267,8 @@ app.whenReady().then(async () => {
   await waitFor(win, "!document.querySelector('#refresh').disabled && Boolean(document.querySelector('.error-banner'))");
   assert.equal(await evaluate(win, `document.querySelector('.panel').textContent.includes(${JSON.stringify(payload)})`), false);
   assert.equal(await evaluate(win, "Boolean(document.querySelector('.panel img, .panel script'))"), false);
+  assert.equal(await evaluate(win, "document.querySelector('[data-section=cpu] .category-state').textContent"), "更新失敗・前回の値");
+  assert.equal(await evaluate(win, "document.querySelector('[data-section=memory] .category-state').textContent"), "取得済み");
   si.cpu = originalCpu;
   const memoryCalls = calls.mem;
   await clickAndWait(win, ".retry-section");

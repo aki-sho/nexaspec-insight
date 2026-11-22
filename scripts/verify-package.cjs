@@ -5,14 +5,18 @@ const asar = require("@electron/asar");
 
 function verifyPackage(archive) {
   const files = asar.listPackage(archive).map(name => name.replaceAll("\\", "/"));
-  for (const file of ["main.js", "preload.js", "index.html", "renderer/app.js", "styles/app.css", "services/hardware-service.js", "services/spec-export.js", "services/window-security.js"]) {
+  for (const file of ["main.js", "preload.js", "index.html", "renderer/app.js", "styles/app.css",
+    "services/hardware-service.js", "services/spec-export.js", "services/window-security.js",
+    "assets/nexaspec-insight.ico", "assets/nexaspec-insight.png"]) {
     assert.ok(files.includes("/" + file), `Missing packaged file: ${file}`);
   }
-  assert.ok(!files.some(name => /^\/(tests|scripts|dist|\.agents|\.codex|\.github|release-history)(\/|$)/.test(name)));
+  assert.ok(!files.some(name => /^\/(tests|scripts|docs|dist|\.agents|\.codex|\.github|release-history)(\/|$)/.test(name)));
   const libraries = new Set(files.map(name => name.match(/^\/node_modules\/([^/]+)/)?.[1]).filter(Boolean));
   assert.deepEqual([...libraries], ["systeminformation"], "Unexpected development dependencies in app.asar");
   const app = JSON.parse(asar.extractFile(archive, "package.json"));
-  assert.equal(app.version, require("../package.json").version);
+  const expected = require("../package.json");
+  assert.equal(app.version, expected.version);
+  assert.equal(app.productName, expected.productName);
   const dependency = JSON.parse(asar.extractFile(archive, path.join("node_modules", "systeminformation", "package.json")));
   assert.equal(dependency.version, require("systeminformation/package.json").version);
   for (const name of files.filter(name => !name.startsWith("/node_modules/") && name !== "/node_modules" && name !== "/package.json")) {

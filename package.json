@@ -1,7 +1,8 @@
 {
-  "name": "pc-spec-tool",
-  "version": "1.1.0",
-  "description": "PC spec viewer",
+  "name": "nexaspec-insight",
+  "productName": "NexaSpec Insight",
+  "version": "1.2.0",
+  "description": "Windows PC specifications and system information viewer",
   "author": "akisho",
   "main": "main.js",
   "scripts": {
@@ -12,15 +13,14 @@
     "build:release": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-release.ps1"
   },
   "dependencies": {
-    "systeminformation": "^5.33.19"
+    "systeminformation": "^5.33.23"
   },
   "devDependencies": {
-    "electron": "^45.2.0",
+    "electron": "^45.4.1",
     "electron-builder": "^26.18.0"
   },
   "build": {
     "appId": "com.example.pcspectool",
-    "productName": "PC Spec Tool",
     "asar": true,
     "files": [
       "main.js",
@@ -30,9 +30,11 @@
       "templates/**/*",
       "services/**/*",
       "styles/**/*",
-      "assets/**/*"
+      "assets/nexaspec-insight.ico",
+      "assets/nexaspec-insight.png"
     ],
     "win": {
+      "icon": "assets/nexaspec-insight.ico",
       "target": [
         {
           "target": "nsis",
@@ -49,20 +51,20 @@
       ]
     },
     "nsis": {
-      "artifactName": "PC-Spec-Tool-Setup-${version}.${ext}",
+      "artifactName": "NexaSpec-Insight-Setup-${version}.${ext}",
       "oneClick": false,
       "perMachine": false,
       "allowElevation": true,
       "allowToChangeInstallationDirectory": true,
       "createStartMenuShortcut": true,
       "createDesktopShortcut": false,
-      "shortcutName": "PC Spec Tool",
-      "uninstallDisplayName": "PC Spec Tool",
+      "shortcutName": "NexaSpec Insight",
+      "uninstallDisplayName": "NexaSpec Insight",
       "deleteAppDataOnUninstall": false,
       "differentialPackage": false
     },
     "portable": {
-      "artifactName": "PC-Spec-Tool-Portable-${version}.${ext}",
+      "artifactName": "NexaSpec-Insight-Portable-${version}.${ext}",
       "requestExecutionLevel": "user"
     }
   }

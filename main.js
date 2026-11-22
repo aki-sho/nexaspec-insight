@@ -9,9 +9,9 @@ const { validateExportOptions, createReport } = require("./services/spec-export"
 
 const entryPath = path.join(__dirname, "index.html");
 const entryUrl = pathToFileURL(entryPath).href;
+const { productName, version } = require("./package.json");
 let mainWindow = null;
 const hardware = createHardwareService(si);
-const appVersion = require("./package.json").version;
 
 function ensureDirectory(directoryPath) {
   fs.mkdirSync(directoryPath, { recursive: true });
@@ -26,6 +26,11 @@ function configureStoragePaths() {
     Boolean(portableExecutableFile);
 
   if (!isPortable) {
+    const userData = path.join(app.getPath("appData"), productName);
+    const legacyUserData = path.join(app.getPath("appData"), "PC Spec Tool");
+    const dataPath = !fs.existsSync(userData) && fs.existsSync(legacyUserData) ? legacyUserData : userData;
+    app.setPath("userData", dataPath);
+    app.setPath("sessionData", dataPath);
     app.setAppLogsPath();
 
     return {
@@ -40,10 +45,11 @@ function configureStoragePaths() {
     };
   }
 
-  const portableData = path.join(
-    path.resolve(portableExecutableDirectory),
-    "PC-Spec-Tool-PortableData"
-  );
+  const portableRoot = path.resolve(portableExecutableDirectory);
+  const currentPortableData = path.join(portableRoot, "NexaSpec-Insight-PortableData");
+  const legacyPortableData = path.join(portableRoot, "PC-Spec-Tool-PortableData");
+  const portableData = !fs.existsSync(currentPortableData) && fs.existsSync(legacyPortableData)
+    ? legacyPortableData : currentPortableData;
   const storagePaths = {
     mode: "portable",
     portableData,
@@ -80,7 +86,7 @@ const storagePaths = configureStoragePaths();
 function writeStartupLog() {
   ensureDirectory(storagePaths.logs);
   fs.appendFileSync(
-    path.join(storagePaths.logs, "pc-spec-tool.log"),
+    path.join(storagePaths.logs, "nexaspec-insight.log"),
     `${JSON.stringify({
       timestamp: new Date().toISOString(),
       ...storagePaths
@@ -97,8 +103,9 @@ function createWindow() {
     height: 820,
     minWidth: 860,
     minHeight: 620,
-    backgroundColor: "#100d1a",
-    title: "PC Spec Tool",
+    backgroundColor: "#edf2f9",
+    title: productName,
+    icon: path.join(__dirname, "assets", "nexaspec-insight.ico"),
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -131,23 +138,23 @@ ipcMain.handle("get-system-info", (event, sections) => {
 
 ipcMain.handle("get-app-info", (event) => {
   assertTrusted(event);
-  return { version: appVersion };
+  return { name: productName, version };
 });
 
 ipcMain.handle("copy-system-info", (event, options) => {
   assertTrusted(event);
   const settings = validateExportOptions(options, false);
-  clipboard.writeText(createReport(hardware.snapshot(), settings, appVersion));
+  clipboard.writeText(createReport(hardware.snapshot(), settings, version));
   return { copied: true };
 });
 
 ipcMain.handle("save-system-info", async (event, options) => {
   assertTrusted(event);
   const settings = validateExportOptions(options);
-  const report = createReport(hardware.snapshot(), settings, appVersion);
+  const report = createReport(hardware.snapshot(), settings, version);
   const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
     title: "PCスペックを保存", buttonLabel: "保存",
-    defaultPath: `PC-Spec-${new Date().toISOString().slice(0, 10)}.${settings.format}`,
+    defaultPath: `NexaSpec-Insight-${new Date().toISOString().slice(0, 10)}.${settings.format}`,
     filters: [{ name: settings.format === "json" ? "JSON" : "テキスト", extensions: [settings.format] }]
   });
   if (canceled || !filePath) return { canceled: true };
