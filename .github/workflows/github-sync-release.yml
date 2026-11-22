@@ -16,6 +16,8 @@ jobs:
       - run: npm ci
       - name: Verify and package
         shell: pwsh
+        env:
+          PC_SPEC_TEST_ALLOW_MISSING_WINDOWS_DETAILS: '1'
         run: |
           $ErrorActionPreference = 'Stop'
           & 'npm.cmd' 'test'

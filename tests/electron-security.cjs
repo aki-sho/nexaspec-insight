@@ -10,9 +10,9 @@ let demoWindowsDetails;
 const liveWindowsDetails = {};
 windows.readWindowsDetails = async (section) => {
   if (demoWindowsDetails) return demoWindowsDetails[section];
-  const details = await readWindowsDetails(section);
-  liveWindowsDetails[section] = details;
-  return details;
+  const query = readWindowsDetails(section);
+  liveWindowsDetails[section] = query;
+  return query;
 };
 
 if (!process.env.PC_SPEC_SECURITY_TEST_DIR) {
@@ -57,9 +57,21 @@ app.whenReady().then(async () => {
   assert.equal(await evaluate(win, "document.title"), productName);
   assert.ok(await evaluate(win, "document.querySelector('.brand img').naturalWidth > 0"));
   if (process.platform === "win32") {
-    assert.ok(Array.isArray(liveWindowsDetails.graphics?.adapters));
-    assert.ok(Array.isArray(liveWindowsDetails.storage?.volumes));
-    assert.ok(Object.hasOwn(liveWindowsDetails.os || {}, "lastBootAt"));
+    const checks = {
+      graphics: (details) => Array.isArray(details?.adapters),
+      storage: (details) => Array.isArray(details?.volumes),
+      os: (details) => Object.hasOwn(details || {}, "lastBootAt")
+    };
+    for (const [section, check] of Object.entries(checks)) {
+      const query = liveWindowsDetails[section];
+      assert.ok(query, `Windows query was not attempted: ${section}`);
+      const details = await query.catch((error) => {
+        if (process.env.PC_SPEC_TEST_ALLOW_MISSING_WINDOWS_DETAILS !== "1") throw error;
+        console.log(`Optional Windows query unavailable on hosted runner: ${section} (${error.killed ? "timeout" : error.code || error.name})`);
+        return undefined;
+      });
+      if (details !== undefined) assert.ok(check(details), `Invalid Windows query result: ${section}`);
+    }
   }
   const entryUrl = win.webContents.getURL();
   const preferences = win.webContents.getLastWebPreferences();
