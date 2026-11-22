@@ -2,7 +2,7 @@
 
 Windows 10 / 11（x64）向けの PC スペック・システム情報ツールです。旧称は PC Spec Tool です。
 
-[最新版をダウンロード](https://github.com/aki-sho/pc-spec-tool/releases/latest) · [更新履歴](CHANGELOG.md)
+[最新版をダウンロード](https://github.com/aki-sho/nexaspec-insight/releases/latest) · [更新履歴](CHANGELOG.md)
 
 ![NexaSpec Insight のシステム概要（サンプルデータ）](docs/images/overview.png)
 
@@ -33,8 +33,8 @@ Windows 10 / 11（x64）向けの PC スペック・システム情報ツール�
 Windows 上で Node.js 24 系と npm を使います。
 
 ```powershell
-git clone https://github.com/aki-sho/pc-spec-tool.git
-cd pc-spec-tool
+git clone https://github.com/aki-sho/nexaspec-insight.git
+cd nexaspec-insight
 npm ci
 npm start
 ```
