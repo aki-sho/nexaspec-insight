@@ -4,7 +4,7 @@ import { memoryTemplate } from "../templates/memory-template.js";
 import { motherboardTemplate } from "../templates/motherboard-template.js";
 import { osTemplate } from "../templates/os-template.js";
 import { storageTemplate } from "../templates/storage-template.js";
-import { createMessageView, formatBytes } from "./spec-view.js";
+import { createMessage, createMessageView, formatBytes, formatDateTime } from "./spec-view.js";
 
 const tabs = [
   ["CPU", "cpu", cpuTemplate], ["Mainboard", "mainboard", motherboardTemplate],
@@ -12,8 +12,8 @@ const tabs = [
   ["Storage", "storage", storageTemplate], ["OS", "os", osTemplate]
 ];
 let systemInfo = null;
-let activeTab = "CPU";
-let collecting = false;
+let activeTab = "All";
+let pendingSections = null;
 let exporting = false;
 let version = "";
 const panel = document.querySelector(".panel");
@@ -29,63 +29,124 @@ function errorMessage(error, fallback) {
 }
 
 function setControls() {
-  document.querySelector("#refresh").disabled = collecting || exporting;
-  document.querySelector("#refresh").textContent = collecting ? "取得中…" : "すべて更新";
+  const busy = Boolean(pendingSections) || exporting;
+  document.querySelector("#refresh").disabled = busy;
+  document.querySelector("#refresh").textContent = pendingSections ? "取得中…" : "すべて更新";
   for (const element of document.querySelectorAll(".export-control")) {
-    element.disabled = collecting || exporting || !tabs.some(([, key]) => systemInfo?.[key]);
+    element.disabled = busy || !tabs.some(([, key]) => systemInfo?.[key]);
   }
   document.querySelector("#retry-failed").hidden = !Object.values(systemInfo?.sections || {}).some((item) => item.state === "error");
-  document.querySelector("#retry-failed").disabled = collecting || exporting;
+  document.querySelector("#retry-failed").disabled = busy;
+  for (const button of panel.querySelectorAll(".retry-section")) button.disabled = busy;
 }
 
 function updateSummary() {
   const summaries = {
     cpu: systemInfo?.cpu?.brand || "—",
     memory: systemInfo?.memory?.total ? formatBytes(systemInfo.memory.total, true) : "—",
-    graphics: systemInfo?.graphics?.controllers?.length ? `${systemInfo.graphics.controllers.length} GPU` : "—",
-    storage: systemInfo?.storage?.disks?.length ? `${systemInfo.storage.disks.length} DISKS` : "—"
+    graphics: systemInfo?.graphics?.controllers?.length ? `${systemInfo.graphics.controllers.length} 台` : "—",
+    storage: systemInfo?.storage?.disks?.length ? `${systemInfo.storage.disks.length} 台` : "—"
   };
-  for (const [key, value] of Object.entries(summaries)) document.querySelector(`#summary-${key}`).textContent = value;
+  for (const [key, value] of Object.entries(summaries)) {
+    const element = document.querySelector(`#summary-${key}`);
+    element.textContent = value;
+    element.title = value;
+  }
   const failed = Object.values(systemInfo?.sections || {}).filter((item) => item.state === "error").length;
-  const stamp = systemInfo?.capturedAt ? new Date(systemInfo.capturedAt).toLocaleTimeString("ja-JP") : "未取得";
-  document.querySelector("#last-updated").textContent = `${failed ? `${failed} 項目で取得エラー · ` : ""}最終取得 ${stamp}`;
-  document.querySelector("#system-state").textContent = collecting ? "SCANNING" : failed ? "PARTIAL DATA" : systemInfo ? "SYSTEM READY" : "READY";
+  const stamp = document.querySelector("#last-updated");
+  stamp.hidden = !systemInfo?.capturedAt;
+  stamp.textContent = `最終確認 ${formatDateTime(systemInfo?.capturedAt)}`;
+  let status = systemInfo ? "取得済み" : "未取得";
+  if (failed) status = `${failed} 分類で取得失敗`;
+  if (pendingSections) status = "取得中";
+  document.querySelector("#system-state").textContent = status;
   document.querySelector(".system-status").classList.toggle("warning", failed > 0);
 }
 
-function renderTab() {
-  const config = tabs.find(([name]) => name === activeTab);
-  let view;
-  if (!config) {
-    view = createMessageView("About", `PC Spec Tool ${version} · Windowsの構成情報を、ローカルで確認するためのツールです。`);
+function renderSection([name, key, template], overview = false) {
+  const section = document.createElement("section");
+  section.className = "category";
+  section.dataset.section = key;
+  if (overview && key !== "cpu" && key !== "mainboard") section.classList.add("category-wide");
+
+  const header = document.createElement("header");
+  header.className = "category-header";
+  const title = document.createElement(overview ? "h3" : "h2");
+  title.textContent = name;
+  const meta = document.createElement("div");
+  meta.className = "category-meta";
+  const state = document.createElement("span");
+  state.className = "category-state";
+  const status = systemInfo?.sections?.[key];
+  const hasData = Boolean(systemInfo?.[key]);
+  const refreshing = pendingSections?.includes(key);
+  const failed = status?.state === "error";
+  if (refreshing) {
+    state.textContent = "取得中";
+  } else if (failed) {
+    state.textContent = hasData ? "更新失敗・前回の値" : "取得失敗";
+    state.classList.add("warning");
   } else {
-    const [, key, template] = config;
-    const status = systemInfo?.sections?.[key];
-    view = status?.state === "error" && !systemInfo[key]
-      ? createMessageView(activeTab, "この項目の情報を取得できませんでした。ほかのタブは引き続き利用できます。")
-      : template(systemInfo);
-    if (status?.state === "error") {
-      const banner = document.createElement("div");
-      banner.className = "error-banner";
-      const message = document.createElement("span");
-      message.textContent = systemInfo[key] ? "更新に失敗しました。前回の取得結果を表示しています。" : status.error;
-      const retry = document.createElement("button");
-      retry.type = "button";
-      retry.className = "button small retry-section";
-      retry.textContent = "この項目を再試行";
-      retry.disabled = collecting;
-      retry.addEventListener("click", () => refresh([key]));
-      banner.append(message, retry);
-      view.prepend(banner);
-    }
+    state.textContent = status?.state === "ok" ? "取得済み" : "未取得";
+    state.classList.toggle("success", status?.state === "ok");
+  }
+  meta.append(state);
+  if (status?.updatedAt) {
+    const time = document.createElement("time");
+    time.dateTime = status.updatedAt;
+    time.textContent = `最終取得 ${formatDateTime(status.updatedAt)}`;
+    meta.append(time);
+  }
+  header.append(title, meta);
+  section.append(header);
+
+  if (failed && !refreshing) {
+    const banner = document.createElement("div");
+    banner.className = "error-banner";
+    const message = document.createElement("span");
+    message.textContent = hasData ? "前回の取得結果を表示しています。" : status.error;
+    const retry = document.createElement("button");
+    retry.type = "button";
+    retry.className = "button small retry-section";
+    retry.textContent = "再試行";
+    retry.setAttribute("aria-label", `${name}を再取得`);
+    retry.disabled = Boolean(pendingSections) || exporting;
+    retry.addEventListener("click", () => refresh([key]));
+    banner.append(message, retry);
+    section.append(banner);
+  }
+  if (hasData) {
+    section.append(template(systemInfo));
+  } else if (!failed || refreshing) {
+    section.append(createMessage(refreshing ? "読み込み中です…" : "情報はまだ取得されていません。"));
+  }
+  return section;
+}
+
+function renderTab() {
+  let view;
+  if (activeTab === "All") {
+    view = document.createDocumentFragment();
+    const heading = document.createElement("h2");
+    heading.className = "overview-title";
+    heading.textContent = "すべて";
+    const sections = document.createElement("div");
+    sections.className = "overview-grid";
+    sections.append(...tabs.map((tab) => renderSection(tab, true)));
+    view.append(heading, sections);
+  } else {
+    const config = tabs.find(([name]) => name === activeTab);
+    view = config
+      ? renderSection(config)
+      : createMessageView("About", `PC Spec Tool ${version} · Windowsの構成情報をローカルで確認できます。`);
   }
   panel.replaceChildren(view);
   panel.setAttribute("aria-labelledby", `tab-${activeTab}`);
 }
 
 async function refresh(sections) {
-  if (collecting) return;
-  collecting = true;
+  if (pendingSections || exporting) return;
+  pendingSections = sections || tabs.map(([, key]) => key);
   announce("PCの情報を取得しています…");
   setControls();
   updateSummary();
@@ -97,15 +158,15 @@ async function refresh(sections) {
   } catch (error) {
     announce(errorMessage(error, "情報の取得に失敗しました。もう一度更新してください。"), true);
   } finally {
-    collecting = false;
-    setControls();
+    pendingSections = null;
     updateSummary();
     renderTab();
+    setControls();
   }
 }
 
 async function exportSpecs(save) {
-  if (collecting || exporting) return;
+  if (pendingSections || exporting) return;
   exporting = true;
   setControls();
   const includeSerial = document.querySelector("#include-serial").checked;
@@ -126,6 +187,7 @@ async function exportSpecs(save) {
 }
 
 const tabButtons = [...document.querySelectorAll(".tab")];
+const content = document.querySelector(".content");
 tabButtons.forEach((tab, index) => {
   tab.addEventListener("click", () => {
     activeTab = tab.dataset.tab;
@@ -136,6 +198,7 @@ tabButtons.forEach((tab, index) => {
       item.tabIndex = selected ? 0 : -1;
     });
     renderTab();
+    content.scrollTop = 0;
   });
   tab.addEventListener("keydown", (event) => {
     let next;

@@ -1,35 +1,35 @@
 // Hardware values and error messages must only enter the DOM as text.
+export function createMessage(message) {
+  const paragraph = document.createElement("p");
+  paragraph.textContent = message;
+  paragraph.className = "empty-message";
+  return paragraph;
+}
+
 export function createMessageView(title, message) {
   const fragment = document.createDocumentFragment();
   const heading = document.createElement("h2");
-  const paragraph = document.createElement("p");
   heading.textContent = title;
-  paragraph.textContent = message;
-  paragraph.className = "empty-message";
+  const paragraph = createMessage(message);
   fragment.append(heading, paragraph);
   return fragment;
 }
 
-export function createSpecView(title, rows) {
-  const fragment = document.createDocumentFragment();
-  const heading = document.createElement("h2");
-  const grid = document.createElement("div");
-  heading.textContent = title;
+export function createSpecGrid(rows) {
+  const grid = document.createElement("dl");
   grid.className = "spec-grid";
-  heading.className = "section-title";
 
   for (const [label, value] of rows) {
-    const labelElement = document.createElement("div");
-    const valueElement = document.createElement("div");
+    const labelElement = document.createElement("dt");
+    const valueElement = document.createElement("dd");
     labelElement.className = "label";
     valueElement.className = "value";
     labelElement.textContent = label;
-    valueElement.textContent = value;
+    valueElement.textContent = value ?? "—";
     grid.append(labelElement, valueElement);
   }
 
-  fragment.append(heading, grid);
-  return fragment;
+  return grid;
 }
 
 export function formatBytes(value, binary = false) {
@@ -41,34 +41,37 @@ export function formatBytes(value, binary = false) {
   return `${(size / base ** index).toLocaleString("ja-JP", { maximumFractionDigits: 2 })} ${units[index]}`;
 }
 
-export function createCard(title, rows, badge) {
+export function formatNumber(value, unit) {
+  return Number.isFinite(value) ? `${value.toLocaleString("ja-JP", { maximumFractionDigits: 2 })} ${unit}` : "—";
+}
+
+export function formatDateTime(value, dateOnly = false) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return dateOnly ? date.toLocaleDateString("ja-JP") : date.toLocaleString("ja-JP");
+}
+
+export function createCard(title, rows) {
   const card = document.createElement("article");
   card.className = "spec-card";
-  const header = document.createElement("div");
-  header.className = "card-header";
-  const heading = document.createElement("h3");
+  const heading = document.createElement("strong");
+  heading.className = "device-name";
   heading.textContent = title;
-  header.append(heading);
-  if (badge) {
-    const tag = document.createElement("span");
-    tag.className = "badge";
-    tag.textContent = badge;
-    header.append(tag);
-  }
-  card.append(header);
-  const content = createSpecView("", rows);
-  content.querySelector("h2").remove();
-  card.append(content);
+  card.append(heading, createSpecGrid(rows));
   return card;
 }
 
-export function createCardPage(title, description, cards) {
-  const fragment = createMessageView(title, description);
-  fragment.querySelector("h2").className = "section-title";
-  fragment.querySelector("p").className = "section-description";
+export function createCardGroup(label, cards) {
+  const group = document.createElement("div");
+  group.className = "device-group";
+  const heading = document.createElement("p");
+  heading.className = "device-group-label";
+  heading.textContent = label;
+  group.append(heading);
   const list = document.createElement("div");
   list.className = "card-list";
   list.append(...cards);
-  fragment.append(list);
-  return fragment;
+  group.append(list);
+  return group;
 }

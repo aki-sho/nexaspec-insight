@@ -30,6 +30,14 @@ function createReport(snapshot, options, version) {
 
   const lines = ["PC Spec Tool / System report", `Version: ${version}`, `Captured: ${report.capturedAt}`,
     `Serial numbers: ${options.includeSerial ? "included" : "excluded"}`, ""];
+  const units = {
+    size: " (bytes)", total: " (bytes)", used: " (bytes)", available: " (bytes)",
+    memMax: " (bytes)", l2: " (bytes)", l3: " (bytes)", bytesPerSector: " (bytes)",
+    clockSpeed: " (MHz)", speed: " (GHz)", speedMax: " (GHz)", voltageConfigured: " (V)",
+    vram: " (MB)", currentResX: " (px)", currentResY: " (px)", currentRefreshRate: " (Hz)",
+    temperatureGpu: " (°C)", temperature: " (°C)", powerDraw: " (W)",
+    use: " (%)", nvmePercentageUsed: " (%)", uptime: " (s)", powerOnHours: " (h)"
+  };
   function append(value, prefix = "") {
     for (const [key, item] of Object.entries(value)) {
       if (Array.isArray(item)) {
@@ -39,8 +47,6 @@ function createReport(snapshot, options, version) {
         lines.push(`${prefix}${key}:`);
         append(item, prefix + "  ");
       } else {
-        const units = { size: " (bytes)", total: " (bytes)", used: " (bytes)", available: " (bytes)",
-          clockSpeed: " (MHz)", speed: " (GHz)", vram: " (MB)", use: " (%)" };
         lines.push(`${prefix}${key}${units[key] || ""}: ${String(item ?? "-").replace(/[\r\n]+/g, " ")}`);
       }
     }
